@@ -48,8 +48,8 @@ LAUNCH_OS_THREAD(Launch_OS_Thread);
 #define JOIN_OS_THREAD(Name) void Name(os_thread *Thread)
 JOIN_OS_THREAD(Join_OS_Thread);
 
-#define INITIALIZE_OS_BARRIER(Name) os_barrier *Name(int Thread_Count)
-INITIALIZE_OS_BARRIER(Initialize_OS_Barrier);
+#define MAKE_OS_BARRIER(Name) os_barrier *Name(int Thread_Count)
+MAKE_OS_BARRIER(Make_OS_Barrier);
 
 #define SYNCHRONIZE_OS_BARRIER(Name) void Name(os_barrier *Barrier)
 SYNCHRONIZE_OS_BARRIER(Synchronize_OS_Barrier);

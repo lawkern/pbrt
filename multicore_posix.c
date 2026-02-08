@@ -47,7 +47,7 @@ struct os_barrier
    pthread_barrier_t Handle;
 };
 
-INITIALIZE_OS_BARRIER(Initialize_OS_Barrier)
+MAKE_OS_BARRIER(Make_OS_Barrier)
 {
    os_barrier *Result = calloc(1, sizeof(*Result));
    if(pthread_barrier_init(&Result->Handle, 0, Thread_Count) == 0)

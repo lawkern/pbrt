@@ -4,10 +4,6 @@
 static volatile int Thread_Count;
 static os_barrier *Barrier;
 
-static int Bitmap_Width = 1024;
-static int Bitmap_Height = 1024;
-static u32 *Bitmap;
-
 #pragma pack(push, 1)
 typedef struct {
    u16 Signature;
@@ -41,7 +37,7 @@ Save_Bitmap_To_File(u32 *Memory, int Width, int Height, char *Filename)
 
    Header.Header_Size = 40;
    Header.Width = Width;
-   Header.Height = Height;
+   Header.Height = -Height;
    Header.Planes = 1;
    Header.Bits_Per_Pixel = 32;
    Header.Image_Size = Bitmap_Size;
@@ -51,6 +47,8 @@ Save_Bitmap_To_File(u32 *Memory, int Width, int Height, char *Filename)
    {
       fwrite(&Header, sizeof(Header), 1, File);
       fwrite(Memory, Header.Image_Size, 1, File);
+
+      printf("Wrote file to %s\n", Filename);
    }
    else
    {
@@ -60,52 +58,86 @@ Save_Bitmap_To_File(u32 *Memory, int Width, int Height, char *Filename)
 
 ENTRY_POINT(Thread_Main)
 {
+   int Bitmap_Width = 2048 + 11;
+   int Bitmap_Height = 2048 + 17;
+   int Tile_Dim = 32;
+
+   int X_Tile_Count = Bitmap_Width / Tile_Dim;
+   int Y_Tile_Count = Bitmap_Height / Tile_Dim;
+
+   int X_Leftover_Count = Bitmap_Width % Tile_Dim;
+   int Y_Leftover_Count = Bitmap_Height % Tile_Dim;
+
+   static u64 Taken_Tiles = 0;
+   int Tile_Count = X_Tile_Count * Y_Tile_Count;
+
+   static u32 *Bitmap_Memory;
    if(In_Main_Thread(Thread))
    {
-      Bitmap = calloc(Bitmap_Width*Bitmap_Height, sizeof(*Bitmap));
+      Bitmap_Memory = calloc(Bitmap_Width*Bitmap_Height, sizeof(*Bitmap_Memory));
    }
+
    Synchronize_OS_Barrier(Barrier);
 
-   int Tile_Width = Bitmap_Width;
-   int Tile_Height = Bitmap_Height / Thread_Count;
-
-   int Start_X = 0;
-   int Start_Y = Thread->Index * Tile_Height;
-
-   u32 Color = (Thread->Index & 1) ? 0x0000FF00 : 0x000000FF;
-
-   for(int Y = Start_Y; Y < Start_Y+Tile_Height; ++Y)
+   for(;;)
    {
-      for(int X = Start_X; X < Start_X+Tile_Width; ++X)
+      int Tile_Index = Atomic_Add_U64(&Taken_Tiles, 1);
+      if(Tile_Index < Tile_Count)
       {
-         Bitmap[Y*Bitmap_Width + X] = Color;
+         int Tile_Y = Tile_Index / X_Tile_Count;
+         int Tile_X = Tile_Index % X_Tile_Count;
+
+         int X_Has_Leftover = (Tile_X < X_Leftover_Count);
+         int Y_Has_Leftover = (Tile_Y < Y_Leftover_Count);
+
+         int X_Prior_Leftovers = X_Has_Leftover ? Tile_X : X_Leftover_Count;
+         int Y_Prior_Leftovers = Y_Has_Leftover ? Tile_Y : Y_Leftover_Count;
+
+         int First_X = (Tile_X * Tile_Dim) + X_Prior_Leftovers;
+         int First_Y = (Tile_Y * Tile_Dim) + Y_Prior_Leftovers;
+
+         int Past_Last_X = First_X + Tile_Dim + !!X_Has_Leftover;
+         int Past_Last_Y = First_Y + Tile_Dim + !!Y_Has_Leftover;
+
+         int Channel_Shift = (Thread->Index % 3) * 8;
+         u32 Color = 0xFF000000 | (0xFF << Channel_Shift);
+
+         for(int Y = First_Y; Y != Past_Last_Y; ++Y)
+         {
+            for(int X = First_X; X != Past_Last_X; ++X)
+            {
+               Bitmap_Memory[Y*Bitmap_Width + X] = Color;
+            }
+         }
+      }
+      else
+      {
+         break;
       }
    }
 
    Synchronize_OS_Barrier(Barrier);
    if(In_Main_Thread(Thread))
    {
-      Save_Bitmap_To_File(Bitmap, Bitmap_Width, Bitmap_Height, "output.bmp");
+      Save_Bitmap_To_File(Bitmap_Memory, Bitmap_Width, Bitmap_Height, "output.bmp");
    }
 }
 
 int main(void)
 {
    Thread_Count = Count_Cpu_Cores();
-   printf("Detected %d CPU Cores.\n", Thread_Count);
+   printf("Using %d threads.\n", Thread_Count);
 
    os_thread *Threads = calloc(Thread_Count, sizeof(*Threads));
-   Barrier = Initialize_OS_Barrier(Thread_Count);
+   Barrier = Make_OS_Barrier(Thread_Count);
 
-   for(int Thread_Index = 1; Thread_Index < Thread_Count; ++Thread_Index)
+   for(int Index = 0; Index < Thread_Count; ++Index)
    {
-      Launch_OS_Thread(Threads+Thread_Index, Thread_Main, Thread_Index, Megabytes(1));
+      Launch_OS_Thread(Threads+Index, Thread_Main, Index, Megabytes(1));
    }
-   Thread_Main(Threads+0);
-
-   for(int Thread_Index = 1; Thread_Index < Thread_Count; ++Thread_Index)
+   for(int Index = 0; Index < Thread_Count; ++Index)
    {
-      Join_OS_Thread(Threads+Thread_Index);
+      Join_OS_Thread(Threads+Index);
    }
    Destroy_OS_Barrier(Barrier);
 
